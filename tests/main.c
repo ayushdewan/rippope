@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "../piece_table.c"
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <file>\n", argv[0]);
@@ -24,7 +26,7 @@ int main(int argc, char *argv[]) {
     rewind(fp);                                 // same as fseek(fp, 0, SEEK_SET)
 
     // allocate buffer (+1 for NUL if you want to treat it as a C-string)
-    char *buf = malloc(size + 1);
+    char *buf = malloc(size);
     if (!buf) {
         perror("malloc");
         fclose(fp);
@@ -39,11 +41,25 @@ int main(int argc, char *argv[]) {
         fclose(fp);
         return EXIT_FAILURE;
     }
-    buf[size] = '\0';                           // optional NUL terminator
+    
+    piece_table ptbl = create_piece_table(buf, size);
+    ptbl_insert_char(&ptbl, '&');
+    
+    ptbl_update_global_cursor_pos(&ptbl, 37);
+    char *last_line = "i'm the last line\n";
+    while (*last_line != '\0') {
+      ptbl_insert_char(&ptbl, *last_line);
+      last_line++;
+    }
 
-    // do something with buf here (e.g., printf("%s\n", buf);)
-    printf("%s\n", buf);
+    ptbl_update_global_cursor_pos(&ptbl, 6);
+    char *middle_line = "cheeseburgers ";
+    while (*middle_line != '\0') {
+      ptbl_insert_char(&ptbl, *middle_line);
+      middle_line++;
+    }
 
+    free_piece_table(&ptbl);
     free(buf);                                  // free the buffer
     fclose(fp);                                 // close the file
     return EXIT_SUCCESS;

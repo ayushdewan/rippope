@@ -1,8 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <assert.h>
 
 #define INITIAL_ADD_BUFFER_CAPACITY 10
-#define BUF_SELECT(piece_table, piece) ({piece_table.orig_buf, piece_table.add_buf.buf}[piece.buf_type])
 
 // Append Only Buffer
 typedef struct {
@@ -26,18 +26,21 @@ typedef struct {
 } piece;
 
 // Linked list of pieces, pl = "piece list"
-typedef struct {
-  pl_node *pre_node_p;
-  pl_node *next_node_p;
+typedef struct pl_node {
+  struct pl_node *pre_node_p;
+  struct pl_node *next_node_p;
   piece p;
 } pl_node;
 
 // Piece Table
 typedef struct {
-  char *orig_buf;             // buffer containing original file contents
-  size_t orig_len;            // size of `orig` buffer
+  char *orig_buf;                 // buffer containing original file contents (user owned)
+  size_t orig_len;               // size of `orig` buffer
   append_only_buffer add_buffer; // buffer containing added text
-  pl_node *piece_list_p;        // Linked List of pieces
+  pl_node *piece_list_head_p;         // linked List of pieces
+  size_t global_cursor_pos;     // position of cursor in table
+  size_t local_cursor_pos;     // position of cursor in piece
+  pl_node *cursor_hint;         // piece list node containing cursor
 } piece_table; 
 
 // TODO: consider replacing/augmenting with logarithmic random access methods with bbst
@@ -59,7 +62,7 @@ piece_table create_piece_table(char *buf, size_t len) {
   }
 
   // initialize piece list with original buffer
-  pl_node *head = malloc(sizeof(pl_node));
+  pl_node *head = (pl_node *) malloc(sizeof(pl_node));
   if (head == NULL) {
     fprintf(stderr, "Error: piece table allocation failed");
     exit(1);
@@ -82,23 +85,79 @@ piece_table create_piece_table(char *buf, size_t len) {
       .len = 0,
       .buf = add_buf,
     },
+    .piece_list_head_p = head,
+    .global_cursor_pos = 0,
+    .local_cursor_pos = 0,
+    .cursor_hint = head,
   };
 }
 
-piece_table_iterator create_piece_table_iterator(piece_table *ptbl_p) {
+void free_piece_table(piece_table *ptbl_p) {
+  free(ptbl_p->add_buffer.buf);
+  pl_node *iter = ptbl_p->piece_list_head_p;
+  while (iter != NULL) {
+    pl_node *next = iter->next_node_p;
+    free(iter);
+    iter = next;
+  }
+}
+
+piece_table_iterator create_ptbl_iterator(piece_table *ptbl_p) {
   assert(ptbl_p != NULL);
-  assert(ptbl_p->piece_list_p != NULL);
+  assert(ptbl_p->piece_list_head_p != NULL);
 
   return (piece_table_iterator) {
     .ptbl_p = ptbl_p,
-    .curr_piece_node = ptbl_p->piece_list_p,
+    .curr_piece_node = ptbl_p->piece_list_head_p,
     .global_index = 0,
-    .piece_index = 0,  
+    .piece_index = 0, 
   };
 }
 
+char query_ptbl_iterator(piece_table_iterator *pti_p) {
+  assert(pti_p != NULL);
+  assert(pti_p->curr_piece_node != NULL);
+  assert(pti_p->ptbl_p != NULL);
+
+  piece curr_piece = pti_p->curr_piece_node->p;
+  size_t index = curr_piece.start + pti_p->piece_index;
+  switch(curr_piece.buf_type) {
+    case ORIGINAL:
+      assert(index < pti_p->ptbl_p->orig_len);
+      return pti_p->ptbl_p->orig_buf[index];
+    case ADD:
+      assert(index < pti_p->ptbl_p->add_buffer.len);
+      return pti_p->ptbl_p->add_buffer.buf[index];
+  }
+}
+
+void advance_ptbl_iterator(piece_table_iterator *pti_p) {
+  assert(pti_p != NULL);
+  assert(pti_p->curr_piece_node != NULL);
+  assert(pti_p->ptbl_p != NULL);
+  
+  pti_p->piece_index++;
+  if (pti_p->piece_index == pti_p->curr_piece_node->p.len) {
+    pti_p->curr_piece_node = pti_p->curr_piece_node->next_node_p;
+    pti_p->piece_index = 0;
+  }
+}
+
+// Assumption that ... <-> x <-> z <-> ... (and at most one may be NULL)
+// Turns into ... <-> x <-> y <-> z <-> ...
+void pl_place_between(pl_node *x, pl_node *y, pl_node *z) {
+  y->next_node_p = z;
+  y->pre_node_p = x;
+  if (z != NULL) {
+    z->pre_node_p = y;
+  }
+  if (x != NULL) {
+    x->next_node_p = y;
+  }
+};
+
 // TODO: create similar function for adding multiple chars at once (for better copy paste support)
-void append_char(append_only_buffer *add_buffer_p, char c) {
+void aob_append_char(append_only_buffer *add_buffer_p, char c) {
   assert(add_buffer_p != NULL);
   assert(add_buffer_p->buf != NULL);
 
@@ -112,18 +171,94 @@ void append_char(append_only_buffer *add_buffer_p, char c) {
   add_buffer_p->len++;
 }
 
-void insert_char(piece_table *ptbl_p, size_t cursor_pos, pl_node* cursor_hint) {
-  assert(cursor_pos <= ptbl_p->orig_len + ptbl_p->add_buffer.len);
-  assert(ptbl_p->piece_list_p != NULL);
+// TODO: create similar function for adding multiple chars at once (for better copy paste support)
+void ptbl_insert_char(piece_table *ptbl_p, char c) {
+  assert(ptbl_p != NULL);
+  assert(ptbl_p->global_cursor_pos <= ptbl_p->orig_len + ptbl_p->add_buffer.len); // TODO: revise this check with a better notion of total piece table length
+  assert(ptbl_p->piece_list_head_p != NULL);
 
-  if (cursor_hint == NULL) {
-    cursor_hint = ptbl_p->piece_list_p;
-    size_t curr_len = ptbl_p->piece_list_p->p.len;
-    while (curr_len < cursor_pos) {
-      // assuming DS invariants hold this access should be safe
-      assert(cursor_hint->next_node_p != NULL);
-      cursor_hint = cursor_hint->next_node_p;
-      curr_len += cursor_hint->p.len;
-    }
+  pl_node *cursor_hint = ptbl_p->cursor_hint;
+  assert(cursor_hint != NULL);
+  assert(cursor_hint->p.len >= ptbl_p->local_cursor_pos);
+  
+  // populate add buffer
+  aob_append_char(&ptbl_p->add_buffer, c);
+  
+  // current piece contains end of add buffer
+  int is_end = cursor_hint->p.len == ptbl_p->local_cursor_pos; 
+  if (cursor_hint->p.buf_type == ADD && is_end && cursor_hint->p.start + cursor_hint->p.len == ptbl_p->add_buffer.len - 1) {
+    cursor_hint->p.len++;
+    ptbl_p->local_cursor_pos++;
+    ptbl_p->global_cursor_pos++;
+    return;
   }
+
+  // allocate a new add piece
+  pl_node *new_node = (pl_node *)malloc(sizeof(pl_node));
+  if (new_node == NULL) {
+    // TODO: handle error
+  }
+  *new_node = (pl_node) {
+    .pre_node_p = NULL,
+    .next_node_p = NULL,
+    .p = (piece) {
+      .buf_type = ADD,
+      .start = ptbl_p->add_buffer.len - 1,
+      .len = 1,
+    },
+  };
+
+  if (is_end) {
+    pl_place_between(cursor_hint, new_node, cursor_hint->next_node_p);
+  } else if (ptbl_p->local_cursor_pos == 0) {
+    if (cursor_hint->pre_node_p == NULL) {
+      ptbl_p->piece_list_head_p = new_node;
+    }
+    pl_place_between(cursor_hint->pre_node_p, new_node, cursor_hint);
+  } else {
+    // split current piece by shortening it and allocating new piece
+    cursor_hint->p.len = ptbl_p->local_cursor_pos;
+    pl_node *split_node = (pl_node*)malloc(sizeof(pl_node));
+    if (split_node == NULL) {
+      // TODO: handle error
+    }
+    *split_node = (pl_node) {
+      .pre_node_p = NULL,
+      .next_node_p = NULL,
+      .p = (piece) {
+        .buf_type = cursor_hint->p.buf_type,
+        .start = ptbl_p->local_cursor_pos,
+        .len = cursor_hint->p.len - ptbl_p->local_cursor_pos,
+      },
+    };
+
+    pl_place_between(cursor_hint, split_node, cursor_hint->next_node_p);
+    pl_place_between(cursor_hint, new_node, split_node);
+  }
+
+  // update cursor state
+  ptbl_p->local_cursor_pos = 1;
+  ptbl_p->global_cursor_pos++;
+  ptbl_p->cursor_hint = new_node;
 }
+
+void ptbl_update_global_cursor_pos(piece_table *ptbl_p, size_t new_global_cursor_pos) {
+  // TODO: notion of piece table length
+  // assert(new_global_cursor_pos < TOTAL_PTBL_LEN);
+  ptbl_p->global_cursor_pos = new_global_cursor_pos;
+  size_t running_len = 0;
+  pl_node *head = ptbl_p->piece_list_head_p;
+  while (head != NULL && running_len + head->p.len < new_global_cursor_pos) {
+    running_len += head->p.len;
+    head = head->next_node_p;
+  }
+  
+  if (head == NULL) {
+    // TODO: panic
+    return;
+  }
+
+  ptbl_p->local_cursor_pos = new_global_cursor_pos - running_len;
+  ptbl_p->cursor_hint = head;
+}
+
