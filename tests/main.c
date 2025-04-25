@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../piece_table.c"
 
@@ -47,17 +48,29 @@ int main(int argc, char *argv[]) {
     
     ptbl_update_global_cursor_pos(&ptbl, 37);
     char *last_line = "i'm the last line\n";
-    while (*last_line != '\0') {
-      ptbl_insert_char(&ptbl, *last_line);
-      last_line++;
+    for(int i = 0; i < strlen(last_line); i++) {
+      ptbl_insert_char(&ptbl, last_line[i]);
     }
 
-    ptbl_update_global_cursor_pos(&ptbl, 6);
+    ptbl_update_global_cursor_pos(&ptbl, 7);
     char *middle_line = "cheeseburgers ";
-    while (*middle_line != '\0') {
-      ptbl_insert_char(&ptbl, *middle_line);
-      middle_line++;
+    for(int i = 0; i < strlen(middle_line); i++) {
+      ptbl_insert_char(&ptbl, middle_line[i]);
     }
+    ptbl_display(&ptbl);
+
+    ptbl_update_global_cursor_pos(&ptbl, 13);
+    for (int i = 0; i < 6; i++) {
+      ptbl_delete_char(&ptbl);
+      printf("---------------------\n");
+      ptbl_display(&ptbl);
+    }
+
+    ptbl_update_global_cursor_pos(&ptbl, 1);
+    ptbl_delete_char(&ptbl);
+
+    printf("---------------------\n");
+    ptbl_display(&ptbl);
 
     free_piece_table(&ptbl);
     free(buf);                                  // free the buffer
