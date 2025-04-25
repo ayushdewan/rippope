@@ -45,6 +45,7 @@ int main(int argc, char *argv[]) {
     
     piece_table ptbl = create_piece_table(buf, size);
     ptbl_insert_char(&ptbl, '&');
+    ptbl_display(&ptbl);
     
     ptbl_update_global_cursor_pos(&ptbl, 37);
     char *last_line = "i'm the last line\n";
@@ -52,11 +53,15 @@ int main(int argc, char *argv[]) {
       ptbl_insert_char(&ptbl, last_line[i]);
     }
 
+    printf("---------------------\n");
+    ptbl_display(&ptbl);
+
     ptbl_update_global_cursor_pos(&ptbl, 7);
     char *middle_line = "cheeseburgers ";
     for(int i = 0; i < strlen(middle_line); i++) {
       ptbl_insert_char(&ptbl, middle_line[i]);
     }
+    printf("---------------------\n");
     ptbl_display(&ptbl);
 
     ptbl_update_global_cursor_pos(&ptbl, 13);
