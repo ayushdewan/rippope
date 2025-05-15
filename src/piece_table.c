@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "piece_table.h"
+#include "../include/piece_table.h"
 
 piece_table create_piece_table(char *buf, size_t len) {
   // initialize append only internal buffer
