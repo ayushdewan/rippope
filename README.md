@@ -1,6 +1,8 @@
 # rippope
 
-A text editor implementation using piece tables for efficient editing, with a modern UI built on Clay and Raylib.
+A text editor implementation using piece tables for efficient editing, built on Clay and Raylib.
+
+![Alt text](screenshot.png)
 
 ## Project Structure
 
@@ -123,7 +125,7 @@ cmake --build .
 ## Dependencies
 
 - [Raylib](https://github.com/raysan5/raylib) - A simple and easy-to-use library for game development
-- Clay - A UI library included in the repository
+- [Clay](https://github.com/nicbarker/clay) - A UI library included in the repository
 
 ## License
 
